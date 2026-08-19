@@ -2,7 +2,7 @@
 // @name         GitHub 增强套件
 // @name:zh-CN   GitHub 增强套件
 // @namespace    https://github.com/sunriseqis/suencj
-// @version      2.1.0
+// @version      2.2.0
 // @description  汉化 + 下载加速 + 字体优化（云端字体·国内可用）+ 搜索引擎切换（全站生效），统一设置面板。已移除原作者信息。
 // @description:zh-CN  汉化 + 下载加速 + 字体优化（云端字体·国内可用）+ 搜索引擎切换（全站生效），统一设置面板。已移除原作者信息。
 // @author       GitHub 增强套件
@@ -33,10 +33,10 @@
  * 本脚本合并四大功能，各模块相互独立、各自 try/catch 隔离：
  *   模块 A —— GitHub 界面汉化（引擎基于 maboloshi/github-chinese 重写，修复搜索框 bug）
  *   模块 B —— 下载加速（在下载位置注入加速图标，跳转 https://github.akams.cn/?link=<下载地址>）
- *   模块 C —— 字体优化（云端字体·国内可用 CDN）
- *   模块 D —— 搜索引擎切换（全站生效：百度/Bing/Google/DDG/搜狗）
+ *   模块 C —— 字体优化（云端字体·国内可用 CDN，全元素覆盖）
+ *   模块 D —— 搜索引擎切换（参考 Google&baidu Switcher：仅搜索结果页、嵌入搜索框旁）
  *   模块 E —— 统一美化设置面板
- * @match 已扩展为全站匹配（http/https 任意域名）以支撑模块 D；模块 A/C 内部带 GitHub 域名守卫，仅作用于 GitHub。
+ * @match 为全站匹配；模块 A/C 带 GitHub 域名守卫仅作用于 GitHub，模块 D 仅在搜索引擎结果页显示。
  */
 
 /* ======================================================================
@@ -894,13 +894,23 @@
 
         const css =
             ':root{' + smoothing + '}' +
-            'body,.markdown-body,#readme,.comment-body,.Box-body,.react-code-text,.blob-code-inner,' +
-            '.cm-line,.js-comment-body,.timeline-comment-body{' +
+            // 全元素 UI 字体覆盖（参考 F9y4ng 字体插件思路：覆盖全部文本元素，
+            // 避免 GitHub 组件显式 font-family 声明导致字体不生效）
+            'html,body,body *{' +
             'font-family:' + uiFamily + '"PingFang SC","Microsoft YaHei",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif !important;' +
             '}' +
-            'pre,code,.blob-code-inner,.cm-line,.react-code-text,.highlight,textarea.input-monospace,' +
-            '.input-monospace,.pl-c,.pl-v,.pl-s,.pl-k{' +
+            // 代码区字体（顺序在后，同特异性时覆盖上面的 UI 字体）
+            'pre,code,kbd,samp,var,tt,.blob-code-inner,.cm-content,.cm-line,.react-code-text,' +
+            '.highlight,.pl-c,.pl-v,.pl-s,.pl-k,textarea.input-monospace,.input-monospace,[data-monospace]{' +
             'font-family:' + codeFamily + '"JetBrains Mono","Fira Code","Cascadia Code",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace !important;' +
+            '}' +
+            // 图标字体元素排除：优先用图标字体，缺失时回退系统字体（防止被 UI 字体覆盖后渲染成方块）
+            '.octicon,.fa,.fas,.far,.fab,.fal,.fad,.material-icons,.mdi,[class^="icon-"],[class*=" icon-"],' +
+            '[class*="material-icons"],.iconfont,.glyphicon,.anticon,[class*="anticon"]{' +
+            'font-family:"Font Awesome 5 Free","Font Awesome 6 Free","Font Awesome 5 Brands","Font Awesome 6 Brands",' +
+            '"Material Icons","Material Icons Outlined","Material Design Icons","Octicons",octicons,' +
+            '"Glyphicons Halflings",iconfont,"Ionicons",Feather,remixicon,"tabler-icons",' +
+            '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif !important;' +
             '}' +
             (scale !== 1 ? 'body{font-size:' + scale + 'em;}' : '');
 
@@ -922,43 +932,86 @@
 
 
 /* ======================================================================
- * 模块 D：搜索引擎切换（全站生效）
- * 参考「Google & baidu Switcher」核心逻辑：取当前搜索词 → 拼接到各引擎 URL → 新标签打开。
- * 任意站点可用：优先读 URL 搜索参数（q/wd/query…），再读当前页搜索框；
- * GitHub 仓库页取 owner/repo。右上角浮层，设置面板可关闭。
+ * 模块 D：搜索引擎切换（参考「Google & baidu Switcher」实现）
+ * 参考插件做法：只在搜索引擎结果页运行，在搜索表单（mainSelector 锚点）
+ * 旁边嵌入引擎切换按钮组；取词优先搜索框 input 值、URL 参数兜底；
+ * 点击目标引擎新标签（后台）打开搜索。
  * ==================================================================== */
 (function (window, document) {
     'use strict';
 
     const ENGINES = {
-        baidu:  { name: '百度',       color: '#2932e1', url: 'https://www.baidu.com/s?ie=utf-8&wd=' },
-        bing:   { name: 'Bing',       color: '#008373', url: 'https://www.bing.com/search?q=' },
-        google: { name: 'Google',     color: '#4285f4', url: 'https://www.google.com/search?q=' },
-        ddg:    { name: 'DuckDuckGo', color: '#de5833', url: 'https://duckduckgo.com/?q=' },
-        sogou:  { name: '搜狗',       color: '#ff6000', url: 'https://www.sogou.com/web?query=' },
+        baidu: {
+            name: '百度', color: '#2932e1',
+            url: 'https://www.baidu.com/s?ie=utf-8&wd=',
+            host: /(^|\.)baidu\.com$/i,
+            params: ['wd', 'word', 'kw'],
+            anchor: '#form, form#form, #search-form, #s_form, form[action*="/s"]',
+            inputSel: 'input[name="wd"], input[name="word"], #kw, input[name="kw"]',
+        },
+        bing: {
+            name: 'Bing', color: '#008373',
+            url: 'https://www.bing.com/search?q=',
+            host: /(^|\.)bing\.com$/i,
+            params: ['q'],
+            anchor: '.b_searchboxForm, form[role="search"], #sb_form, form[action*="/search"]',
+            inputSel: 'input[name="q"]',
+        },
+        google: {
+            name: 'Google', color: '#4285f4',
+            url: 'https://www.google.com/search?q=',
+            host: /(^|\.)google\.(com|[a-z]{2,3})(\.|$)/i,
+            params: ['q'],
+            anchor: 'form[role="search"], form#tsf, #tsf, form[action*="/search"]',
+            inputSel: 'input[name="q"]',
+        },
+        ddg: {
+            name: 'DuckDuckGo', color: '#de5833',
+            url: 'https://duckduckgo.com/?q=',
+            host: /(^|\.)duckduckgo\.com$/i,
+            params: ['q'],
+            anchor: '#search_form, form[role="search"], form[action*="duckduckgo"]',
+            inputSel: '#search_form_input, input[name="q"]',
+        },
+        sogou: {
+            name: '搜狗', color: '#ff6000',
+            url: 'https://www.sogou.com/web?query=',
+            host: /(^|\.)sogou\.com$/i,
+            params: ['query', 'q'],
+            anchor: 'form#searchForm, form[action*="/web"], #searchForm',
+            inputSel: 'input[name="query"], input[name="q"], #query',
+        },
     };
-    const NON_REPO = ['settings', 'orgs', 'sponsors', 'topics', 'collections', 'about',
-        'explore', 'notifications', 'new', 'login', 'join', 'marketplace', 'pricing', 'sessions'];
+    // 通用搜索参数兜底（非标准引擎页）
+    const GEN_PARAMS = ['q', 'wd', 'query', 'search', 'keyword', 'kw', 'text'];
+    // 各引擎通用搜索框选择器兜底
+    const GEN_INPUT = 'input[name="q"]:not([type="hidden"]), input[name="wd"], input[name="query"], input[type="search"]';
 
-    function getQuery() {
-        const url = new URL(window.location.href);
-        // 1) 常见搜索参数：Google/Bing/DDG 用 q，百度用 wd，搜狗用 query，部分站点用 search/keyword
-        for (const k of ['q', 'wd', 'query', 'search', 'keyword', 'kw', 'text', 'keyword']) {
-            const v = url.searchParams.get(k);
+    // 当前是否位于某引擎的搜索结果页
+    function detectCurrentEngine() {
+        const host = window.location.hostname;
+        for (const key of Object.keys(ENGINES)) {
+            const e = ENGINES[key];
+            if (e.host.test(host)) return key;
+        }
+        return null;
+    }
+
+    // 取当前查询词：优先搜索框 input 值（参考插件顺序），URL 参数兜底
+    function getQuery(engineKey) {
+        const e = ENGINES[engineKey];
+        const sel = e ? [e.inputSel, GEN_INPUT].filter(Boolean).join(', ') : GEN_INPUT;
+        try {
+            const input = document.querySelector(sel);
+            if (input && input.value && input.value.trim()) return input.value.trim();
+        } catch (err) { /* ignore */ }
+        const params = e ? [...e.params, ...GEN_PARAMS] : GEN_PARAMS;
+        const sp = new URL(window.location.href).searchParams;
+        for (const k of params) {
+            const v = sp.get(k);
             if (v && v.trim()) return v.trim();
         }
-        // 2) GitHub 仓库页：取 owner/repo（仅限 github.com 系列）
-        if (/github\.com$/i.test(url.hostname) || /\.github\.com$/i.test(url.hostname)) {
-            const m = url.pathname.match(/^\/([^/]+)\/([^/]+)(?:\/|$)/);
-            if (m && m[2] && !NON_REPO.includes(m[1])) return m[1] + '/' + m[2];
-        }
-        // 3) 当前页面主搜索框（兼容各站与 GitHub 新旧搜索组件）
-        const input = document.querySelector(
-            'input[name="q"]:not([type="hidden"]), input[name="wd"], input[name="query"], ' +
-            'input[type="search"], #search input[type="text"], ' +
-            'qbsearch-input input, #query-builder input, #query-builder-input'
-        );
-        return input ? input.value.trim() : '';
+        return '';
     }
 
     function buildWidget() {
@@ -966,56 +1019,89 @@
         if (old) old.remove();
         if (GM_getValue('enable_searchswitch', true) === false) return;
 
+        // 仅在搜索引擎结果页显示（参考插件行为），普通网站/GitHub 不显示
+        const curKey = detectCurrentEngine();
+        if (!curKey) return;
+
+        const q = getQuery(curKey);
+        if (!q) return; // 首页/无查询词不显示
+
         const enabled = (GM_getValue('search_engines', 'baidu,bing,google,ddg,sogou') || '')
             .split(',').map((s) => s.trim()).filter(Boolean);
         if (!enabled.length) return;
 
         const bar = document.createElement('div');
         bar.id = 'gh-search-switch';
+        bar.className = 'gh-search-switch';
         bar.style.cssText = [
-            'position:fixed', 'top:60px', 'right:12px', 'z-index:9999',
-            'display:flex', 'gap:6px', 'align-items:center',
-            'background:#ffffff', 'border:1px solid #d0d7de', 'border-radius:10px',
-            'padding:6px 8px', 'box-shadow:0 4px 14px rgba(0,0,0,.12)',
-            'font-size:12px', 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+            'display:inline-flex', 'gap:4px', 'align-items:center',
+            'margin:6px 0', 'padding:5px', 'background:rgba(255,255,255,.92)',
+            'border:1px solid rgba(60,60,67,.16)', 'border-radius:999px',
+            'box-shadow:0 1px 4px rgba(0,0,0,.08)',
+            'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif',
+            'font-size:12px', 'line-height:1',
         ].join(';');
         const label = document.createElement('span');
-        label.textContent = '用：';
-        label.style.cssText = 'color:#656d76;';
+        label.textContent = '切换：';
+        label.style.cssText = 'color:#6e7781;padding:0 2px 0 6px;';
         bar.appendChild(label);
 
         enabled.forEach((key) => {
             const e = ENGINES[key];
             if (!e) return;
-            const b = document.createElement('a');
-            b.textContent = e.name;
-            b.href = '#';
-            b.style.cssText = 'color:#fff;background:' + e.color + ';padding:2px 8px;' +
-                'border-radius:6px;text-decoration:none;font-weight:600;cursor:pointer;';
-            b.addEventListener('click', (ev) => {
-                ev.preventDefault();
-                const q = getQuery();
-                if (!q) { window.alert('未能获取当前搜索词（请先进入仓库或搜索页）'); return; }
-                const target = e.url + encodeURIComponent(q);
-                if (typeof GM_openInTab !== 'undefined') GM_openInTab(target, true);
-                else window.open(target, '_blank');
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = e.name;
+            btn.dataset.engine = key;
+            btn.style.cssText = 'border:none;cursor:pointer;padding:5px 12px;border-radius:999px;' +
+                'font-size:12px;font-weight:600;color:#fff;background:' + e.color + ';';
+            if (key === curKey) {
+                // 当前引擎：高亮描边 + 不变灰，标注「当前」
+                btn.textContent = e.name + ' ✓';
+                btn.style.cssText += 'box-shadow:0 0 0 2px #fff,0 0 0 4px ' + e.color + ';opacity:1;';
+            } else {
+                btn.style.cssText += 'opacity:.82;';
+            }
+            btn.addEventListener('click', () => {
+                const word = getQuery(curKey);
+                if (!word) return;
+                const target = e.url + encodeURIComponent(word);
+                try {
+                    if (typeof GM_openInTab !== 'undefined') GM_openInTab(target, false); // 后台新标签（参考插件默认）
+                    else window.open(target, '_blank');
+                } catch (err) { window.open(target, '_blank'); }
             });
-            bar.appendChild(b);
+            bar.appendChild(btn);
         });
-        (document.body || document.documentElement).appendChild(bar);
+
+        // 注入：优先嵌入搜索表单锚点之后（参考插件 insertAfter 锚点）；
+        // 找不到锚点（页面改版）时浮动在页面顶部保证可用
+        const cur = ENGINES[curKey];
+        const anchor = cur.anchor ? document.querySelector(cur.anchor) : null;
+        if (anchor && anchor.parentNode) {
+            anchor.insertAdjacentElement('afterend', bar);
+        } else {
+            bar.style.cssText += 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483646;';
+            (document.body || document.documentElement).appendChild(bar);
+        }
     }
 
     function initSearch() {
-        if (document.body) buildWidget();
-        else document.addEventListener('DOMContentLoaded', buildWidget, { once: true });
-        window.addEventListener('load', () => setTimeout(buildWidget, 600));
-        window.addEventListener('urlchange', () => setTimeout(buildWidget, 300));
-        document.addEventListener('turbo:load', () => setTimeout(buildWidget, 300));
-        document.addEventListener('pjax:end', () => setTimeout(buildWidget, 300));
+        const build = () => { try { buildWidget(); } catch (e) { /* ignore */ } };
+        if (document.body) build();
+        else document.addEventListener('DOMContentLoaded', build, { once: true });
+        window.addEventListener('load', () => setTimeout(build, 600));
+        window.addEventListener('urlchange', () => setTimeout(build, 300));
+        document.addEventListener('turbo:load', () => setTimeout(build, 300));
+        document.addEventListener('pjax:end', () => setTimeout(build, 300));
+        // 结果页动态渲染兜底（搜索框/锚点后出现或搜索词变化时重建）
+        const mo = new MutationObserver(() => setTimeout(build, 250));
+        if (document.body) mo.observe(document.body, { childList: true, subtree: true });
+        else document.addEventListener('DOMContentLoaded', () => mo.observe(document.body, { childList: true, subtree: true }), { once: true });
     }
 
     initSearch();
-    window.__ghSearch = { build: buildWidget };
+    window.__ghSearch = { build: () => { try { buildWidget(); } catch (e) { /* ignore */ } } };
 })(window, document);
 
 
