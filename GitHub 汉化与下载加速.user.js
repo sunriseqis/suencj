@@ -1,11 +1,11 @@
 // ==UserScript==
-// @name         GitHub 汉化与下载加速
-// @name:zh-CN   GitHub 汉化与下载加速
-// @namespace    https://github.com/local/github-zh-accel
-// @version      1.0.0
-// @description  最新 GitHub 界面完整汉化（修复搜索框消失的 bug）+ 在任意可下载位置一键跳转 github.akams.cn 加速下载并自动填入地址。
-// @description:zh-CN  最新 GitHub 界面完整汉化（修复搜索框消失的 bug）+ 在任意可下载位置一键跳转 github.akams.cn 加速下载并自动填入地址。
-// @author       WorkBuddy · SeniorDeveloper
+// @name         GitHub 增强套件
+// @name:zh-CN   GitHub 增强套件
+// @namespace    https://github.com/sunriseqis/suencj
+// @version      2.0.0
+// @description  汉化 + 下载加速 + 字体优化（云端字体·国内可用）+ 搜索引擎切换，统一设置面板。已移除原作者信息。
+// @description:zh-CN  汉化 + 下载加速 + 字体优化（云端字体·国内可用）+ 搜索引擎切换，统一设置面板。已移除原作者信息。
+// @author       GitHub 增强套件
 // @icon         https://github.githubassets.com/pinned-octocat.svg
 // @license      GPL-3.0
 // @match        https://github.com/*
@@ -20,11 +20,12 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_unregisterMenuCommand
 // @grant        GM_openInTab
+// @grant        GM_addStyle
 // @grant        GM_notification
 // @grant        GM_xmlhttpRequest
 // @grant        window.onurlchange
 // @connect      fanyi.iflyrec.com
-// @supportURL   https://github.com/maboloshi/github-chinese/issues
+// @supportURL   https://github.com/sunriseqis/suencj/issues
 // ==/UserScript==
 
 /*
@@ -38,6 +39,9 @@
  * ==================================================================== */
 (function (window, document) {
     'use strict';
+
+    // 功能总开关：关闭时本模块不翻译（实时切换需刷新页面生效）
+    if (GM_getValue('enable_localization', true) === false) return;
 
     const FeatureSet = {
         enable_RegExp: GM_getValue('enable_RegExp', true),
@@ -728,8 +732,17 @@
         return true;
     }
 
+    // 移除所有已注入的加速图标（关闭功能时调用）
+    function removeAccelIcons() {
+        document.querySelectorAll('a.' + MARK_CLASS).forEach((a) => a.remove());
+    }
+
     // 全页扫描可加速的下载链接，返回本次新注入图标的数量
     function scan(root = document) {
+        if (GM_getValue('enable_accel', true) === false) {
+            removeAccelIcons();
+            return 0;
+        }
         let anchors;
         try {
             anchors = root.querySelectorAll('a[href]');
@@ -800,4 +813,385 @@
     } else {
         window.addEventListener('DOMContentLoaded', init, { once: true });
     }
+
+    // 暴露给统一设置面板：实时开启/关闭加速图标
+    window.__ghAccel = {
+        rescan: () => { if (GM_getValue('enable_accel', true)) scan(); },
+        remove: removeAccelIcons,
+    };
+})(window, document);
+
+
+/* ======================================================================
+ * 模块 C：字体优化（云端字体 · 国内可用）
+ * 参考「字体渲染（自用脚本）」思路，聚焦 GitHub：加载云端 webfont 并应用字体栈。
+ * 默认 CDN（均可在设置面板切换/自定义）：
+ *   - UI 中文：霞鹜文楷 LXGW WenKai Screen（fastly.jsdelivr.net 国内镜像）
+ *   - 代码：JetBrains Mono（fonts.font.im 国内 Google Fonts 镜像）
+ * ==================================================================== */
+(function (window, document) {
+    'use strict';
+
+    const FONT_PRESETS = {
+        system:    { label: '系统默认优化（不加载云端字体）', ui: null, code: null },
+        lxgw:      { label: '霞鹜文楷（UI 中文）', ui: 'https://fastly.jsdelivr.net/npm/lxgw-wenkai-screen-webfont/style.css', code: null },
+        jetbrains: { label: 'JetBrains Mono（代码）', ui: null, code: 'https://fonts.font.im/css2?family=JetBrains+Mono:wght@400;500;700&display=swap' },
+        combo:     { label: '霞鹜文楷 + JetBrains Mono（推荐）', ui: 'https://fastly.jsdelivr.net/npm/lxgw-wenkai-screen-webfont/style.css', code: 'https://fonts.font.im/css2?family=JetBrains+Mono:wght@400;500;700&display=swap' },
+        custom:    { label: '自定义', ui: null, code: null },
+    };
+
+    function applyFont() {
+        // 清理旧注入
+        document.querySelectorAll('link[data-gh-font]').forEach((l) => l.remove());
+        document.querySelectorAll('style[data-gh-font]').forEach((s) => s.remove());
+
+        if (GM_getValue('enable_font', true) === false) return;
+
+        const presetKey = GM_getValue('font_preset', 'combo');
+        const preset = FONT_PRESETS[presetKey] || FONT_PRESETS.combo;
+
+        // 自定义预设：URL 与字体族名均实时读取（保存后立即生效，不依赖启动时的缓存）
+        let uiUrl = preset.ui, codeUrl = preset.code;
+        let uiFamily = preset.ui ? '"LXGW WenKai Screen", ' : '';
+        let codeFamily = preset.code ? '"JetBrains Mono", ' : '';
+        if (presetKey === 'custom') {
+            uiUrl = GM_getValue('font_ui_url', '') || null;
+            codeUrl = GM_getValue('font_code_url', '') || null;
+            const uf = (GM_getValue('font_ui_family', '') || '').trim();
+            const cf = (GM_getValue('font_code_family', '') || '').trim();
+            if (uf) uiFamily = '"' + uf + '", ';
+            if (cf) codeFamily = '"' + cf + '", ';
+        }
+
+        // 注入云端字体 CSS
+        [uiUrl, codeUrl].forEach((url) => {
+            if (!url) return;
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = url;
+            link.dataset.ghFont = '1';
+            (document.head || document.documentElement).appendChild(link);
+        });
+
+        const smoothing = GM_getValue('font_smoothing', true)
+            ? '-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;'
+            : '';
+        const scale = parseFloat(GM_getValue('font_scale', '1')) || 1;
+
+        const css =
+            ':root{' + smoothing + '}' +
+            'body,.markdown-body,#readme,.comment-body,.Box-body,.react-code-text,.blob-code-inner,' +
+            '.cm-line,.js-comment-body,.timeline-comment-body{' +
+            'font-family:' + uiFamily + '"PingFang SC","Microsoft YaHei",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif !important;' +
+            '}' +
+            'pre,code,.blob-code-inner,.cm-line,.react-code-text,.highlight,textarea.input-monospace,' +
+            '.input-monospace,.pl-c,.pl-v,.pl-s,.pl-k{' +
+            'font-family:' + codeFamily + '"JetBrains Mono","Fira Code","Cascadia Code",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace !important;' +
+            '}' +
+            (scale !== 1 ? 'body{font-size:' + scale + 'em;}' : '');
+
+        const style = document.createElement('style');
+        style.dataset.ghFont = '1';
+        style.textContent = css;
+        (document.head || document.documentElement).appendChild(style);
+    }
+
+    function initFont() {
+        if (document.head) applyFont();
+        else document.addEventListener('DOMContentLoaded', applyFont, { once: true });
+        window.addEventListener('load', () => setTimeout(applyFont, 500));
+    }
+
+    initFont();
+    window.__ghFont = { apply: applyFont };
+})(window, document);
+
+
+/* ======================================================================
+ * 模块 D：搜索引擎切换（GitHub 版）
+ * 参考「Google & baidu Switcher」核心逻辑：取当前查询词 → 拼接到各引擎 URL → 新标签打开。
+ * ==================================================================== */
+(function (window, document) {
+    'use strict';
+
+    const ENGINES = {
+        baidu:  { name: '百度',       color: '#2932e1', url: 'https://www.baidu.com/s?ie=utf-8&wd=' },
+        bing:   { name: 'Bing',       color: '#008373', url: 'https://www.bing.com/search?q=' },
+        google: { name: 'Google',     color: '#4285f4', url: 'https://www.google.com/search?q=' },
+        ddg:    { name: 'DuckDuckGo', color: '#de5833', url: 'https://duckduckgo.com/?q=' },
+        sogou:  { name: '搜狗',       color: '#ff6000', url: 'https://www.sogou.com/web?query=' },
+    };
+    const NON_REPO = ['settings', 'orgs', 'sponsors', 'topics', 'collections', 'about',
+        'explore', 'notifications', 'new', 'login', 'join', 'marketplace', 'pricing', 'sessions'];
+
+    function getQuery() {
+        const q = new URL(window.location.href).searchParams.get('q');
+        if (q) return q.trim();
+        const m = window.location.pathname.match(/^\/([^/]+)\/([^/]+)(?:\/|$)/);
+        if (m && m[2] && !NON_REPO.includes(m[1])) return m[1] + '/' + m[2];
+        // qbsearch-input 是自定义元素标签名（非 id）；兼容新旧两种搜索组件
+        const input = document.querySelector('qbsearch-input input, #query-builder input, #query-builder-input, input[name="q"]');
+        return input ? input.value.trim() : '';
+    }
+
+    function buildWidget() {
+        const old = document.getElementById('gh-search-switch');
+        if (old) old.remove();
+        if (GM_getValue('enable_searchswitch', true) === false) return;
+
+        const enabled = (GM_getValue('search_engines', 'baidu,bing,google,ddg,sogou') || '')
+            .split(',').map((s) => s.trim()).filter(Boolean);
+        if (!enabled.length) return;
+
+        const bar = document.createElement('div');
+        bar.id = 'gh-search-switch';
+        bar.style.cssText = [
+            'position:fixed', 'top:60px', 'right:12px', 'z-index:9999',
+            'display:flex', 'gap:6px', 'align-items:center',
+            'background:#ffffff', 'border:1px solid #d0d7de', 'border-radius:10px',
+            'padding:6px 8px', 'box-shadow:0 4px 14px rgba(0,0,0,.12)',
+            'font-size:12px', 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+        ].join(';');
+        const label = document.createElement('span');
+        label.textContent = '用：';
+        label.style.cssText = 'color:#656d76;';
+        bar.appendChild(label);
+
+        enabled.forEach((key) => {
+            const e = ENGINES[key];
+            if (!e) return;
+            const b = document.createElement('a');
+            b.textContent = e.name;
+            b.href = '#';
+            b.style.cssText = 'color:#fff;background:' + e.color + ';padding:2px 8px;' +
+                'border-radius:6px;text-decoration:none;font-weight:600;cursor:pointer;';
+            b.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                const q = getQuery();
+                if (!q) { window.alert('未能获取当前搜索词（请先进入仓库或搜索页）'); return; }
+                const target = e.url + encodeURIComponent(q);
+                if (typeof GM_openInTab !== 'undefined') GM_openInTab(target, true);
+                else window.open(target, '_blank');
+            });
+            bar.appendChild(b);
+        });
+        (document.body || document.documentElement).appendChild(bar);
+    }
+
+    function initSearch() {
+        if (document.body) buildWidget();
+        else document.addEventListener('DOMContentLoaded', buildWidget, { once: true });
+        window.addEventListener('load', () => setTimeout(buildWidget, 600));
+        window.addEventListener('urlchange', () => setTimeout(buildWidget, 300));
+        document.addEventListener('turbo:load', () => setTimeout(buildWidget, 300));
+        document.addEventListener('pjax:end', () => setTimeout(buildWidget, 300));
+    }
+
+    initSearch();
+    window.__ghSearch = { build: buildWidget };
+})(window, document);
+
+
+/* ======================================================================
+ * 模块 E：统一美化设置面板
+ * 浮动齿轮按钮 + 居中模态；四个功能卡片（汉化 / 下载加速 / 字体优化 / 搜索引擎切换），
+ * 各带开关与选项；保存即生效。已移除各参考脚本原作者的署名与推广信息。
+ * ==================================================================== */
+(function (window, document) {
+    'use strict';
+
+    const DEFAULTS = {
+        enable_localization: true,
+        enable_accel: true,
+        enable_font: true,
+        font_preset: 'combo',
+        font_smoothing: true,
+        font_scale: '1',
+        font_ui_url: '',
+        font_code_url: '',
+        font_ui_family: '',
+        font_code_family: '',
+        enable_searchswitch: true,
+        search_engines: 'baidu,bing,google,ddg,sogou',
+    };
+
+    const STYLE = [
+        '.gh-settings-overlay{position:fixed;inset:0;background:rgba(27,31,36,.5);z-index:100000;',
+        'display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}',
+        '.gh-settings-modal{background:#fff;width:min(640px,92vw);max-height:86vh;overflow:auto;border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.28);}',
+        '.gh-settings-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #eaecef;}',
+        '.gh-settings-header h2{margin:0;font-size:16px;color:#1f2328;}',
+        '.gh-settings-close{border:none;background:#f3f4f6;width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:16px;color:#57606a;}',
+        '.gh-settings-body{padding:8px 20px 16px;}',
+        '.gh-card{border:1px solid #eaecef;border-radius:10px;padding:14px 16px;margin:12px 0;}',
+        '.gh-card h3{margin:0 0 4px;font-size:14px;color:#1f2328;display:flex;align-items:center;justify-content:space-between;}',
+        '.gh-card>p{margin:4px 0 10px;font-size:12px;color:#656d76;line-height:1.5;}',
+        '.gh-row{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:13px;color:#1f2328;}',
+        '.gh-row>label{flex:1;}',
+        '.gh-switch{position:relative;width:40px;height:22px;flex:none;}',
+        '.gh-switch input{opacity:0;width:0;height:0;}',
+        '.gh-slider{position:absolute;cursor:pointer;inset:0;background:#d0d7de;border-radius:22px;transition:.2s;}',
+        '.gh-slider:before{content:"";position:absolute;width:16px;height:16px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;}',
+        '.gh-switch input:checked+.gh-slider{background:#1f6feb;}',
+        '.gh-switch input:checked+.gh-slider:before{transform:translateX(18px);}',
+        '.gh-settings select,.gh-settings input[type=text]{padding:5px 8px;border:1px solid #d0d7de;border-radius:6px;font-size:13px;max-width:100%;}',
+        '.gh-engines{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;}',
+        '.gh-engines label{display:flex;align-items:center;gap:4px;font-size:13px;}',
+        '.gh-settings-footer{display:flex;gap:10px;justify-content:flex-end;padding:14px 20px;border-top:1px solid #eaecef;}',
+        '.gh-btn{border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;}',
+        '.gh-btn-primary{background:#1f6feb;color:#fff;}',
+        '.gh-btn-ghost{background:#f3f4f6;color:#1f2328;}',
+        '.gh-gear{position:fixed;right:14px;bottom:14px;z-index:99999;width:42px;height:42px;border-radius:50%;border:none;',
+        'background:#1f6feb;color:#fff;font-size:20px;cursor:pointer;box-shadow:0 6px 18px rgba(31,111,235,.4);}',
+    ].join('');
+
+    function get(key) { return GM_getValue(key, DEFAULTS[key]); }
+    function set(key, val) { GM_setValue(key, val); }
+
+    function applyLive() {
+        if (window.__ghFont) window.__ghFont.apply();
+        if (window.__ghSearch) window.__ghSearch.build();
+        const accel = get('enable_accel');
+        if (window.__ghAccel) { accel ? window.__ghAccel.rescan() : window.__ghAccel.remove(); }
+    }
+
+    function buildModal() {
+        const overlay = document.createElement('div');
+        overlay.className = 'gh-settings-overlay';
+        overlay.style.display = 'none';
+
+        const modal = document.createElement('div');
+        modal.className = 'gh-settings-modal';
+
+        modal.innerHTML =
+            '<div class="gh-settings-header"><h2>GitHub 增强套件 · 设置</h2>' +
+            '<button class="gh-settings-close" title="关闭">×</button></div>' +
+            '<div class="gh-settings-body">' +
+
+            // 汉化
+            '<div class="gh-card"><h3><span>界面汉化</span>' + toggle('enable_localization') + '</h3>' +
+            '<p>最新 GitHub 界面完整汉化（已修复搜索框消失问题）。开关需刷新页面生效。</p></div>' +
+
+            // 下载加速
+            '<div class="gh-card"><h3><span>下载加速</span>' + toggle('enable_accel') + '</h3>' +
+            '<p>在 Release 资源 / Code(ZIP) / Raw 等下载位置注入加速图标，跳转 github.akams.cn。</p></div>' +
+
+            // 字体优化
+            '<div class="gh-card"><h3><span>字体优化（云端字体·国内可用）</span>' + toggle('enable_font') + '</h3>' +
+            '<p>从国内可用 CDN 加载云端字体并应用到 GitHub 界面与代码。切换预设即时生效。</p>' +
+            '<div class="gh-row"><label>字体预设</label>' + presetSelect() + '</div>' +
+            '<div class="gh-row"><label>字体平滑（抗锯齿）</label>' + toggle('font_smoothing') + '</div>' +
+            '<div class="gh-row"><label>字号缩放（<span id="gh-scale-val">' + get('font_scale') + '</span>×）</label>' +
+            '<input type="range" id="gh-scale" min="0.8" max="1.4" step="0.05" value="' + get('font_scale') + '"></div>' +
+            '<div id="gh-custom-fonts" style="display:' + (get('font_preset') === 'custom' ? 'block' : 'none') + '">' +
+            '<div class="gh-row"><label>UI 字体 CSS 地址</label><input type="text" id="gh-ui-url" placeholder="https://.../font.css" style="flex:1" value="' + escapeAttr(get('font_ui_url')) + '"></div>' +
+            '<div class="gh-row"><label>UI 字体族名</label><input type="text" id="gh-ui-family" placeholder="LXGW WenKai Screen" style="flex:1" value="' + escapeAttr(get('font_ui_family')) + '"></div>' +
+            '<div class="gh-row"><label>代码字体 CSS 地址</label><input type="text" id="gh-code-url" placeholder="https://.../font.css" style="flex:1" value="' + escapeAttr(get('font_code_url')) + '"></div>' +
+            '<div class="gh-row"><label>代码字体族名</label><input type="text" id="gh-code-family" placeholder="JetBrains Mono" style="flex:1" value="' + escapeAttr(get('font_code_family')) + '"></div>' +
+            '</div></div>' +
+
+            // 搜索引擎切换
+            '<div class="gh-card"><h3><span>搜索引擎切换</span>' + toggle('enable_searchswitch') + '</h3>' +
+            '<p>在页面右上角提供按钮，将当前仓库 / 搜索词一键发往以下引擎（新标签打开）。</p>' +
+            '<div class="gh-engines" id="gh-engines"></div></div>' +
+
+            '</div>' +
+            '<div class="gh-settings-footer">' +
+            '<button class="gh-btn gh-btn-ghost" id="gh-reset">恢复默认</button>' +
+            '<button class="gh-btn gh-btn-primary" id="gh-save">保存并应用</button>' +
+            '</div>';
+
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        // 绑定引擎复选框
+        const enginesBox = modal.querySelector('#gh-engines');
+        const enabled = (get('search_engines') || '').split(',').map((s) => s.trim()).filter(Boolean);
+        ['baidu', 'bing', 'google', 'ddg', 'sogou'].forEach((key) => {
+            const lbl = document.createElement('label');
+            lbl.innerHTML = '<input type="checkbox" value="' + key + '"' + (enabled.includes(key) ? ' checked' : '') + '> ' + ENGINE_NAMES[key];
+            enginesBox.appendChild(lbl);
+        });
+
+        // 预设切换显隐自定义框
+        modal.querySelector('#gh-font-preset').addEventListener('change', (e) => {
+            modal.querySelector('#gh-custom-fonts').style.display = e.target.value === 'custom' ? 'block' : 'none';
+        });
+        // 缩放数值显示
+        modal.querySelector('#gh-scale').addEventListener('input', (e) => {
+            modal.querySelector('#gh-scale-val').textContent = e.target.value;
+        });
+
+        // 关闭
+        const close = () => { overlay.style.display = 'none'; };
+        modal.querySelector('.gh-settings-close').addEventListener('click', close);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+        // 保存
+        modal.querySelector('#gh-save').addEventListener('click', () => {
+            modal.querySelectorAll('.gh-switch input').forEach((cb) => set(cb.dataset.key, cb.checked));
+            set('font_preset', modal.querySelector('#gh-font-preset').value);
+            set('font_scale', modal.querySelector('#gh-scale').value);
+            set('font_ui_url', modal.querySelector('#gh-ui-url').value.trim());
+            set('font_code_url', modal.querySelector('#gh-code-url').value.trim());
+            set('font_ui_family', modal.querySelector('#gh-ui-family').value.trim());
+            set('font_code_family', modal.querySelector('#gh-code-family').value.trim());
+            const engines = Array.from(modal.querySelectorAll('#gh-engines input:checked')).map((c) => c.value);
+            set('search_engines', engines.join(','));
+            applyLive();
+            close();
+            GM_notification && GM_notification({ text: '设置已保存并应用', title: 'GitHub 增强套件' });
+        });
+
+        // 恢复默认
+        modal.querySelector('#gh-reset').addEventListener('click', () => {
+            Object.keys(DEFAULTS).forEach((k) => set(k, DEFAULTS[k]));
+            applyLive();
+            openSettings(); // 重渲染
+        });
+
+        return overlay;
+    }
+
+    const ENGINE_NAMES = { baidu: '百度', bing: 'Bing', google: 'Google', ddg: 'DuckDuckGo', sogou: '搜狗' };
+
+    function toggle(key) {
+        return '<span class="gh-switch"><input type="checkbox" data-key="' + key + '"' +
+            (get(key) ? ' checked' : '') + '><span class="gh-slider"></span></span>';
+    }
+    function presetSelect() {
+        const presets = [['system', '系统默认优化'], ['lxgw', '霞鹜文楷（UI 中文）'],
+            ['jetbrains', 'JetBrains Mono（代码）'], ['combo', '霞鹜文楷 + JetBrains Mono（推荐）'], ['custom', '自定义']];
+        const cur = get('font_preset');
+        const opts = presets.map(([v, t]) => '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + t + '</option>').join('');
+        return '<select id="gh-font-preset">' + opts + '</select>';
+    }
+    function escapeAttr(s) { return String(s).replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+
+    let modalEl = null;
+    function openSettings() {
+        if (!modalEl || !modalEl.isConnected) modalEl = buildModal();
+        modalEl.style.display = 'flex';
+    }
+
+    function initSettings() {
+        if (typeof GM_addStyle !== 'undefined') GM_addStyle(STYLE);
+        else {
+            const s = document.createElement('style'); s.textContent = STYLE;
+            (document.head || document.documentElement).appendChild(s);
+        }
+        const gear = document.createElement('button');
+        gear.className = 'gh-gear';
+        gear.textContent = '⚙';
+        gear.title = 'GitHub 增强套件 · 设置';
+        gear.addEventListener('click', openSettings);
+        const mount = () => (document.body || document.documentElement).appendChild(gear);
+        if (document.body) mount(); else document.addEventListener('DOMContentLoaded', mount, { once: true });
+
+        try {
+            GM_registerMenuCommand('GitHub 增强套件 · 打开设置', openSettings);
+        } catch (e) { /* 菜单注册失败不影响 */ }
+    }
+
+    initSettings();
 })(window, document);
