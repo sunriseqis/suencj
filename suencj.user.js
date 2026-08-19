@@ -2,9 +2,9 @@
 // @name         GitHub 增强套件
 // @name:zh-CN   GitHub 增强套件
 // @namespace    https://github.com/sunriseqis/suencj
-// @version      2.0.0
-// @description  汉化 + 下载加速 + 字体优化（云端字体·国内可用）+ 搜索引擎切换，统一设置面板。已移除原作者信息。
-// @description:zh-CN  汉化 + 下载加速 + 字体优化（云端字体·国内可用）+ 搜索引擎切换，统一设置面板。已移除原作者信息。
+// @version      2.1.0
+// @description  汉化 + 下载加速 + 字体优化（云端字体·国内可用）+ 搜索引擎切换（全站生效），统一设置面板。已移除原作者信息。
+// @description:zh-CN  汉化 + 下载加速 + 字体优化（云端字体·国内可用）+ 搜索引擎切换（全站生效），统一设置面板。已移除原作者信息。
 // @author       GitHub 增强套件
 // @icon         https://github.githubassets.com/pinned-octocat.svg
 // @license      GPL-3.0
@@ -13,6 +13,7 @@
 // @match        https://skills.github.com/*
 // @match        https://education.github.com/*
 // @match        https://www.githubstatus.com/*
+// @match        *://*/*
 // @require      https://raw.githubusercontent.com/maboloshi/github-chinese/gh-pages/locals.js
 // @run-at       document-start
 // @grant        GM_getValue
@@ -29,9 +30,13 @@
 // ==/UserScript==
 
 /*
- * 本脚本合并两大功能，两个模块相互独立、各自 try/catch 隔离：
+ * 本脚本合并四大功能，各模块相互独立、各自 try/catch 隔离：
  *   模块 A —— GitHub 界面汉化（引擎基于 maboloshi/github-chinese 重写，修复搜索框 bug）
  *   模块 B —— 下载加速（在下载位置注入加速图标，跳转 https://github.akams.cn/?link=<下载地址>）
+ *   模块 C —— 字体优化（云端字体·国内可用 CDN）
+ *   模块 D —— 搜索引擎切换（全站生效：百度/Bing/Google/DDG/搜狗）
+ *   模块 E —— 统一美化设置面板
+ * @match 已扩展为全站匹配（http/https 任意域名）以支撑模块 D；模块 A/C 内部带 GitHub 域名守卫，仅作用于 GitHub。
  */
 
 /* ======================================================================
@@ -39,6 +44,11 @@
  * ==================================================================== */
 (function (window, document) {
     'use strict';
+
+    // 域名守卫：脚本已扩展为全局匹配（支撑模块D搜索引擎切换全站生效），
+    // 但汉化只作用于 GitHub 系列站点，其余页面直接退出，避免误翻译任意网站。
+    const GH_HOST = /(^|\.)(github\.com|gist\.github\.com|skills\.github\.com|education\.github\.com|www\.githubstatus\.com)$/i;
+    if (!GH_HOST.test(window.location.hostname)) return;
 
     // 功能总开关：关闭时本模块不翻译（实时切换需刷新页面生效）
     if (GM_getValue('enable_localization', true) === false) return;
@@ -832,6 +842,10 @@
 (function (window, document) {
     'use strict';
 
+    // 域名守卫：字体优化仅作用于 GitHub 系列站点（避免全站匹配后在任意网站注入字体样式）
+    const GH_HOST = /(^|\.)(github\.com|gist\.github\.com|skills\.github\.com|education\.github\.com|www\.githubstatus\.com)$/i;
+    if (!GH_HOST.test(window.location.hostname)) return;
+
     const FONT_PRESETS = {
         system:    { label: '系统默认优化（不加载云端字体）', ui: null, code: null },
         lxgw:      { label: '霞鹜文楷（UI 中文）', ui: 'https://fastly.jsdelivr.net/npm/lxgw-wenkai-screen-webfont/style.css', code: null },
@@ -908,8 +922,10 @@
 
 
 /* ======================================================================
- * 模块 D：搜索引擎切换（GitHub 版）
- * 参考「Google & baidu Switcher」核心逻辑：取当前查询词 → 拼接到各引擎 URL → 新标签打开。
+ * 模块 D：搜索引擎切换（全站生效）
+ * 参考「Google & baidu Switcher」核心逻辑：取当前搜索词 → 拼接到各引擎 URL → 新标签打开。
+ * 任意站点可用：优先读 URL 搜索参数（q/wd/query…），再读当前页搜索框；
+ * GitHub 仓库页取 owner/repo。右上角浮层，设置面板可关闭。
  * ==================================================================== */
 (function (window, document) {
     'use strict';
@@ -925,12 +941,23 @@
         'explore', 'notifications', 'new', 'login', 'join', 'marketplace', 'pricing', 'sessions'];
 
     function getQuery() {
-        const q = new URL(window.location.href).searchParams.get('q');
-        if (q) return q.trim();
-        const m = window.location.pathname.match(/^\/([^/]+)\/([^/]+)(?:\/|$)/);
-        if (m && m[2] && !NON_REPO.includes(m[1])) return m[1] + '/' + m[2];
-        // qbsearch-input 是自定义元素标签名（非 id）；兼容新旧两种搜索组件
-        const input = document.querySelector('qbsearch-input input, #query-builder input, #query-builder-input, input[name="q"]');
+        const url = new URL(window.location.href);
+        // 1) 常见搜索参数：Google/Bing/DDG 用 q，百度用 wd，搜狗用 query，部分站点用 search/keyword
+        for (const k of ['q', 'wd', 'query', 'search', 'keyword', 'kw', 'text', 'keyword']) {
+            const v = url.searchParams.get(k);
+            if (v && v.trim()) return v.trim();
+        }
+        // 2) GitHub 仓库页：取 owner/repo（仅限 github.com 系列）
+        if (/github\.com$/i.test(url.hostname) || /\.github\.com$/i.test(url.hostname)) {
+            const m = url.pathname.match(/^\/([^/]+)\/([^/]+)(?:\/|$)/);
+            if (m && m[2] && !NON_REPO.includes(m[1])) return m[1] + '/' + m[2];
+        }
+        // 3) 当前页面主搜索框（兼容各站与 GitHub 新旧搜索组件）
+        const input = document.querySelector(
+            'input[name="q"]:not([type="hidden"]), input[name="wd"], input[name="query"], ' +
+            'input[type="search"], #search input[type="text"], ' +
+            'qbsearch-input input, #query-builder input, #query-builder-input'
+        );
         return input ? input.value.trim() : '';
     }
 
